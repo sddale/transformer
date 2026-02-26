@@ -1,0 +1,37 @@
+name: Run Tests
+
+# Trigger the workflow on pushes and pull requests to the main branch
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Grab your code from GitHub
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # 2. Install uv (with aggressive caching for speed)
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      # 3. Install Python (uv reads your .python-version file automatically)
+      - name: Set up Python
+        run: uv python install
+
+      # 4. Install your project and dependencies
+      # (This syncs the environment exactly as it is in your uv.lock)
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      # 5. Run the test suite using pytest
+      - name: Run tests
+        run: uv run pytest tests/
