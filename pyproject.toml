@@ -8,12 +8,13 @@ dependencies = [
     "kagglehub>=1.0.0",
     "numpy>=2.4.2",
     "pandas>=3.0.1",
-    "pyspellchecker>=0.8.4",
     "pytest>=9.0.2",
     "ruff>=0.15.3",
+    "symspellpy>=6.9.0",
     "tensorboard>=2.20.0",
     "torch>=2.10.0",
     "ty>=0.0.19",
+    "typer>=0.24.1",
 ]
 
 [build-system]
