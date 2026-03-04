@@ -12,8 +12,8 @@ def config():
     return Config(
         d_model=10,
         d_vocab=100,
-        d_hidden=0,
-        n_hidden=4 * 10,
+        d_hidden=4 * 10,
+        n_hidden=0,
         d_head=10,
         n_blocks=2,
         n_context=10,
