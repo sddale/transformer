@@ -9,11 +9,13 @@ class Attention(nn.Module):
     def __init__(self, conf: Config) -> None:
         super().__init__()
         self.WQ = nn.Linear(conf.d_model, conf.d_head, bias=conf.attn_bias)
+        self.__init_weights(self.WQ, conf.attn_bias)
+
         self.WK = nn.Linear(conf.d_model, conf.d_head, bias=conf.attn_bias)
+        self.__init_weights(self.WK, conf.attn_bias)
+
         self.WV = nn.Linear(conf.d_model, conf.d_model, bias=conf.attn_bias)
-        self.d_model = conf.d_model
-        torch.nn.init.xavier_uniform_(self.WV.weight)
-        torch.nn.init.zeros_(self.WV.bias)
+        self.__init_weights(self.WV, conf.attn_bias)
 
         self.softmax = nn.Softmax(dim=-1)
 
@@ -27,10 +29,9 @@ class Attention(nn.Module):
         k = self.WK(x)
         v = self.WV(x)
         attn = self.softmax(q @ (k.transpose(-2, -1)) + M)
-        # print(f"attn{q=}")
-        # print(f"attn{k=}")
-        # print(f"attn{x=}")
-        # print(f"attn{v=}")
-        # print(f"attn{attn=}")
-        # print(f"attn{out=}")
         return attn @ v
+
+    def __init_weights(self, M, head_bias):
+        torch.nn.init.xavier_uniform_(M.weight)
+        if head_bias:
+            torch.nn.init.zeros_(M.bias)
