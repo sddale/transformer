@@ -31,6 +31,9 @@ def main(
 
     print(f"Using device {device}.")
 
+    data_dir = Path("data")
+    data_dir.mkdir(parents=True, exist_ok=True)
+
     # Load kaggle dataset
     print("Loading dataset...")
     data = " ".join(load_data(force_remake=force_fresh_data))
