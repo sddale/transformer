@@ -25,8 +25,6 @@ class Tokenizer:
         for char, replacement in punctuation_convert.items():
             text = text.replace(char, replacement)
 
-        # if a line has ".jpg" in it, remove that line (this is specific to Don Quixote)
-        text = "\n".join(line for line in text.split("\n") if ".jpg" not in line)
         # Normalize the string to decompose Unicode characters
         text = unicodedata.normalize("NFKD", text)
 
@@ -53,7 +51,7 @@ class Tokenizer:
             (
                 char
                 if (char.isalnum() or char in allowed_punctuation or char == " ")
-                else " "
+                else ""
             )
             for char in text
         )
@@ -92,7 +90,9 @@ class Tokenizer:
         """Encodes data using a pre-constructed vocab dictionary."""
         if isinstance(text, str):
             text = self.tokenize(text)
-        return np.array([self.vocab_dict[word] for word in text])
+        return np.array(
+            [self.vocab_dict[word] for word in text if word in self.vocab_dict]
+        )
 
     def decode(self, encoded_text: list[int]) -> str:
         """Decodes data using a pre-constructed vocab list."""
