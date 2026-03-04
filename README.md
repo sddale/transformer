@@ -55,9 +55,10 @@ Generated text from untrained model:
 ## Design notes 
 - The model is presently a standard basic single attention-head transformer.
 - $W_{QK}$ and $W_{VO}$ matrices have been split for performance and implemented as linear layers for easier initialization.
-- The used dataset was initially comprised of 585,000 Amazon food reviews. Spell checking entries and then discarding reviews with unknown words reduced the size to 480,000 reviews.
-- The model is comprised of 13,890,560 parameters with the vocabulary from this set. This was the biggest challenge of this project as the vocabulary was intractably large without eliminating the typos. Conversely, simply removing the typos would leave incoherent sentences in the dataset. Our solution is to first attempt to correct misspelled words using a fast spell checker implementing the symmetric delete algorithm (`SymSpell`). Simpler spellcheckers (e.g. `pyspellchecker`) proved too slow to use. Next, we perform a second scan of the dataset and remove entire entries if any words are left unknown to the spell checker.
-- The resulting outputs show some common english patterns or phrases but is still incoherent overall. This is expected as (1) the model is relatively small, (2) the tokenization is extremely basic, and (3) the batching and slicing of the dataset pre-training is not sophisticated. 
+- The used dataset was initially comprised of ~565,000 Amazon food reviews. By spell checking each entry and then discarding reviews with unknown words reduced the size to 480,000.
+- The model is comprised of 13,890,560 parameters with the vocabulary from this set.
+- Establishing a reasonable vocabulary was the biggest challenge of working with this dataset as the vocabulary was intractably large without eliminating typos in reviews. Conversely, simply removing the typos would leave incoherent sentences in the dataset. Our solution is to first attempt to correct misspelled words using a fast spell checker implementing the symmetric delete algorithm (`SymSpell`). Simpler spellcheckers (e.g. `pyspellchecker`) proved too slow to use. Next, we perform a second scan of the dataset and remove entire entries if any words are left unknown to the spell checker.
+- The resulting outputs show some common english patterns or phrases but are still incoherent overall. This is expected as (1) the model is relatively small, (2) the tokenization is extremely basic, and (3) the batching and slicing of the dataset pre-training is not sophisticated. 
 - Future expansions may use SwiGLU for the MLP component, investigate up-to-date tokenization, and implement multi-headed attention. 
 
 ## Contributions 
