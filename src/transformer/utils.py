@@ -1,11 +1,13 @@
 import kagglehub
 import numpy as np
 import pandas as pd
+import re
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from pathlib import Path
-from spellchecker import SpellChecker
+from symspellpy import SymSpell, Verbosity
 from .tokenizer import Tokenizer
+import importlib.resources
 
 
 def load_data(force_remake=False, save_path="data/processed_data.npy"):
@@ -14,7 +16,7 @@ def load_data(force_remake=False, save_path="data/processed_data.npy"):
         return np.load(save_path)
 
     if force_remake:
-        print("Force remake option detected.")
+        print("Force remake dataset option detected.")
         print("Warning: This may take a while...")
 
     # Download dataset from kaggle
@@ -25,35 +27,97 @@ def load_data(force_remake=False, save_path="data/processed_data.npy"):
     assert csv_data.is_file()
 
     df_full = pd.read_csv(csv_data)
-    df_full = df_full[::10]
+    # df_full = df_full[::4]  # Reduce dataset size
+
+    sym_spell = SymSpell(
+        max_dictionary_edit_distance=2,  # typos up to 2 letters
+        prefix_length=7,
+    )
+
+    with importlib.resources.path(
+        "symspellpy", "frequency_dictionary_en_82_765.txt"
+    ) as dictionary_path:
+        sym_spell.load_dictionary(str(dictionary_path), term_index=0, count_index=1)
+
+    # Cache to store words we've already checked/corrected
+    corrections = {}
+
+    def correct_spelling(text):
+        if pd.isna(text):
+            return text
+
+        # Process individual words matched by regex
+        def replace_word(match):
+            word = match.group(0)
+
+            # Skip numbers
+            if word.isdigit():
+                return word
+
+            word = word.lower()
+
+            if word in corrections:  # Check cache
+                corrected = corrections[word]
+            else:  # use spellchecker & add to cache
+                suggestions = sym_spell.lookup(
+                    word, Verbosity.CLOSEST, max_edit_distance=2, include_unknown=True
+                )
+                corrected = suggestions[0].term if suggestions else word
+                corrections[word] = corrected
+
+            return corrected
+
+        # Use Regex to find whole words, process them, and keep punctuation intact
+        return re.sub(r"\b[A-Za-z]+\b", replace_word, str(text))
+
+    # Spell check & correct
+    print("Starting correction process (1/2)...")
+    df_full["Text"] = df_full["Text"].apply(correct_spelling)
+    print(f"Found {df_full.shape[0]} data points after first pass.")
+
+    good_words = {}
+
+    # Second pass spell check
+    # This time we eliminate an entire entry if a single word is unknown
+    def is_clean(text):
+        if pd.isna(text):
+            return False
+        text = Tokenizer.process_text(text)
+        for word in str(text).split():
+            if word in good_words and not good_words[word]:  # In cache and bad
+                return False
+            if word not in good_words:  # Not in cache
+                suggestions = sym_spell.lookup(
+                    word, Verbosity.CLOSEST, max_edit_distance=2, include_unknown=False
+                )
+                if not suggestions:  # Unknown word
+                    good_words[word] = False
+                    return False
+                good_words[word] = True
+        return True
+
+    # Mask of rows where all words are spelled correctly
+    print("Starting correction process (2/2)...")
+    mask = df_full["Text"].apply(is_clean)
+    df_full = df_full[mask]
+
+    print(f"Found {df_full.shape[0]} data points after second pass.")
 
     assert "Text" in df_full.columns
     assert len(df_full["Text"]) > 0
 
-    data_unchecked = [Tokenizer.process_text(x) for x in df_full["Text"].to_numpy()]
-
-    # Eliminate entire entry if spelling error found (corrections take too long)
-    spell = SpellChecker()
-    data_proc = np.ndarray([])
-    n_rows = len(data_unchecked)
-    allowed_punc = '-.,;:!?()"' + "".join(str(x) for x in range(10))
-    for i, review in enumerate(data_unchecked):
-        print(f"{i}/{n_rows}")
-
-        if np.all(
-            [word in spell or word in allowed_punc for word in review.split(" ")]
-        ):
-            data_proc = np.append(data_proc, review)
-
-    np.save(save_path, data_proc)
-    return data_proc
+    data = [Tokenizer.process_text(x) for x in df_full["Text"].to_numpy()]
+    np.save(save_path, data)
+    print("Processing complete!")
+    return data
 
 
-def get_loaders(data_encoded, batch_size=2056):
-    """Utility function to wrap encoded data in a torch dataloader for training."""
-    tData = torch.tensor(data_encoded)
+def get_loaders(data_encoded, batch_size=2056, seed=12345):
+    """Utility function to wrap encoded data in a torch `DataLoader` for training."""
+    tData = torch.from_numpy(np.array(data_encoded))
     gen = torch.Generator(device=torch.device("cpu"))
-    gen.manual_seed(12345)
+    if seed is not None:
+        gen.manual_seed(seed)
 
     loader = DataLoader(
         TensorDataset(tData),
@@ -66,13 +130,7 @@ def get_loaders(data_encoded, batch_size=2056):
     return loader
 
 
-def train(
-    model,
-    optim,
-    loader_tr,
-    writer,
-    epochs=10,
-):
+def train(model, optim, loader_tr, writer, epochs=10, write_interval=10):
     """A basic training loop."""
     device = next(model.parameters()).device
     n_batches = torch.tensor(len(loader_tr), device=device)
@@ -81,50 +139,46 @@ def train(
     model.train()
     for epoch in range(epochs):
         total_loss.zero_()
-        for (batch,) in loader_tr:
-            # xs = batch[:-1, :]
-            # ys = batch[1:, :]  # offset by one
-            xs = batch[:, :-1]
-            ys = batch[:, 1:]  # offset by one
-            # print(xs.shape)
-            # print(xs)
+        for i, (batch,) in enumerate(loader_tr):
+            xs = batch[:, :-1]  # e.g. [the quick brown]
+            ys = batch[:, 1:]  # e.g. [quick brown fox]
             xs = xs.to(device, dtype=torch.long)
-            # print(f"{xs.shape=}")
-            # print(f"{xs=}")
-            # print(f"{ys=}")
             ys = ys.to(device, dtype=torch.long)
             y_hats = model(xs)
-
-            # print(f"{y_hats=}")
-            # print(f"{ys=}")
-            # print(f"{y_hats.shape=}")
-            # print(f"{ys.shape=}")
             loss = torch.nn.functional.cross_entropy(y_hats.transpose(1, 2), ys)
-            # print(f"{loss=}")
             optim.zero_grad()
             loss.backward()
             optim.step()
+            loss_val = loss.detach().cpu().numpy()
+            if i % write_interval == 0:
+                print(f"B: {i + 1}/{n_batches}, Loss: {loss_val:.3f}")
+                writer.add_scalar("Loss/Batch", loss_val, i)
             total_loss += loss.detach()
+
         total_loss = total_loss / n_batches
         loss_sum = total_loss.cpu().numpy()
-        writer.add_scalar("Loss", loss_sum, epoch)
-        print(f"E: {epoch}/{epochs}, Loss: {loss_sum}")
+        writer.add_scalar("Loss/sum", loss_sum, epoch)
+        print(f"E: {epoch + 1}/{epochs}, Loss: {loss_sum}")
 
 
 def generate(model, tokenizer, prompt, len_output):
-    prompt_tensor = torch.tensor(
-        tokenizer.encode(prompt),
-        dtype=torch.long,
-        device=next(model.parameters()).device,
-    ).unsqueeze(0)
+    """Generate a response from `model` beginning with `prompt`."""
+    model.eval()
+    with torch.no_grad():
+        prompt = prompt.lower()
+        prompt_tensor = torch.tensor(
+            tokenizer.encode(prompt),
+            dtype=torch.long,
+            device=next(model.parameters()).device,
+        ).unsqueeze(0)
 
-    response = list()
-    for _ in range(len_output):
-        logits = model(prompt_tensor)
-        logits = logits[:, -1, :]  # get final step
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        idx_next = torch.multinomial(probs, num_samples=1)
-        prompt_tensor = torch.cat((prompt_tensor, idx_next), dim=1)
-        response.append(int(idx_next[0, 0]))
+        response = list()
+        for _ in range(len_output):
+            logits = model(prompt_tensor)
+            logits = logits[:, -1, :]  # get final step
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            prompt_tensor = torch.cat((prompt_tensor, idx_next), dim=1)
+            response.append(int(idx_next[0, 0]))
 
-    return prompt + tokenizer.decode(response)
+        return prompt + tokenizer.decode(response)
