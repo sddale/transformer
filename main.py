@@ -4,9 +4,22 @@ from transformer.transformer import Transformer
 from transformer.utils import train, load_data, get_loaders, generate
 from transformer.config import Config
 from transformer.tokenizer import Tokenizer
+from pathlib import Path
+import typer
+from typing_extensions import Annotated
 
 
-def main():
+def main(
+    interactive: Annotated[
+        bool, typer.Option(help="Launch interactive session.")
+    ] = False,
+    out_tokens: Annotated[
+        int, typer.Option(help="Length of generated model output.")
+    ] = 128,
+    model_path: str = "data/model.pt",
+    force_train: bool = False,
+    force_fresh_data: bool = False,
+):
     device = (
         torch.device("mps")
         if torch.mps.is_available()
@@ -15,26 +28,25 @@ def main():
         else torch.device("cpu")
     )
 
-    print(f"{device=}")
+    print(f"Using device {device}.")
 
     # Load kaggle dataset
-    # Do not "force_remake" unless you have a few hours to wait
-    data = " ".join(load_data(force_remake=False))
+    print("Loading dataset...")
+    data = " ".join(load_data(force_remake=force_fresh_data))
+    print("Dataset initialized.")
 
     # Create tokenizer
     tk = Tokenizer(data)
 
     # Setup some model hyperparameters
     conf = Config(
-        # d_model=200,
         d_model=128,
-        d_vocab=len(tk.vocab_dict.keys()),
+        d_vocab=len(tk.vocab_dict),
         d_hidden=4 * 128,
         n_hidden=0,
-        # d_head=100,
         d_head=128,
         n_blocks=2,
-        n_context=300,
+        n_context=256,
         attn_bias=True,
     )
 
@@ -46,9 +58,9 @@ def main():
 
     # Instantiate transformer network
     trans = Transformer(conf, device).to(device)
+    # print(f"Parameter count: {sum(p.numel() for p in trans.parameters())}")
 
-    # Compile for speedup
-    trans.compile(
+    trans.compile(  # Compile for speedup
         backend=("aot_eager" if device == torch.device("mps") else "inductor")
     )
 
@@ -56,20 +68,38 @@ def main():
     optim = torch.optim.AdamW(trans.parameters(), lr=1e-4, fused=True)
 
     # Train & save
-    train(
-        model=trans,
-        optim=optim,
-        loader_tr=loader_tr,
-        writer=SummaryWriter(),
-        epochs=10,
-    )
-    torch.save(trans, "model.pt")
-    # trans = torch.load("model.pt", weights_only=False)
+    if not force_train and Path(model_path).is_file():
+        trans.state_dict = torch.load(model_path, weights_only=False)
+        print("Loaded trained model.\n")
+    else:
+        print("Beginning training...")
+        train(
+            model=trans,
+            optim=optim,
+            loader_tr=loader_tr,
+            writer=SummaryWriter(),
+            epochs=1,
+        )
+        print("Training complete.\n")
+        torch.save(trans.state_dict, model_path)
+        print("Model saved.")
 
-    # Get some gibberish
-    response = generate(trans, tk, "the chocolate was ", 128)
-    print(response)
+    # Get generated string
+    if interactive:
+        exit_phrase = "Goodbye"
+        print(f'Beginning interactive session. Send "{exit_phrase}" to exit.')
+        while True:
+            prompt = input(
+                "Give me the first few words of a sentence to get me started...\n"
+            )
+            if prompt == exit_phrase:
+                break
+            if prompt[-1] != " ":
+                prompt += " "
+            print(generate(trans, tk, prompt, out_tokens) + "\n")
+    else:
+        print(generate(trans, tk, "the chocolate was ", out_tokens))
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)
