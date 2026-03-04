@@ -17,7 +17,14 @@ class Tokenizer:
     def process_text(
         text: str,
         allowed_punctuation: str = '-.,;:!?()"' + "".join(str(x) for x in range(10)),
-        punctuation_convert: dict[str, str] = {"—": "-", "n't": " not", "'ve": " have"},
+        punctuation_convert: dict[str, str] = {
+            "—": "-",
+            "can't": "can not",
+            "cant": "can not",
+            "cannot": "can not",
+            "n't": " not",
+            "'ve": " have",
+        },
         split_punc=True,
     ) -> str:
         """A suite of text processing calls adapted from github.com/mines-opt-ml/decoding-gpt."""
