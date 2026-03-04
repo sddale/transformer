@@ -7,6 +7,7 @@ from transformer.tokenizer import Tokenizer
 from pathlib import Path
 import typer
 from typing_extensions import Annotated
+from collections import OrderedDict
 
 
 def main(
@@ -58,21 +59,32 @@ def main(
 
     # Instantiate transformer network
     trans = Transformer(conf, device).to(device)
-    # print(f"Parameter count: {sum(p.numel() for p in trans.parameters())}")
-
-    trans.compile(  # Compile for speedup
-        backend=("aot_eager" if device == torch.device("mps") else "inductor")
-    )
+    print(f"Parameter count: {sum(p.numel() for p in trans.parameters())}")
 
     # Declare optimizer. Fused provides speedup
     optim = torch.optim.AdamW(trans.parameters(), lr=1e-4, fused=True)
 
+    # Compiler backend for speedups
+    backend = "aot_eager" if device == torch.device("mps") else "inductor"
+
     # Train & save
     if not force_train and Path(model_path).is_file():
-        trans.state_dict = torch.load(model_path, weights_only=False)
+        # Handle & load compiled state dict
+        state_dict = torch.load(model_path, weights_only=False)
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            name = k.replace("_orig_mod.", "")
+            new_state_dict[name] = v
+
+        trans.load_state_dict(new_state_dict)
+
+        trans.compile(backend=backend)
+
         print("Loaded trained model.\n")
     else:
         print("Beginning training...")
+
+        trans.compile(backend=backend)
         train(
             model=trans,
             optim=optim,
@@ -81,7 +93,7 @@ def main(
             epochs=1,
         )
         print("Training complete.\n")
-        torch.save(trans.state_dict, model_path)
+        torch.save(trans.state_dict(), model_path)
         print("Model saved.")
 
     # Get generated string
